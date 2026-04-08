@@ -6,171 +6,271 @@
 
 <!DOCTYPE html>
 <html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/TemplateData/style.css">
-  </head>
-  <body>
-    <div id="unity-container" style="width: 900px; height: 506px">
-      <canvas id="unity-canvas"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
+<head>
+<meta charset="utf-8"/>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<link rel="shortcut icon" href="https://cdn.jsdelivr.net/gh/gulamen/gulax7@main/TemplateData/favicon.ico"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/gulamen/gulax7@main/TemplateData/style.css"/>
+<style>
+    canvas:focus { outline: none; }
+</style>
+</head>
+<body class="dark">
+
+<div id="unity-container" class="unity-desktop">
+    <canvas id="unity-canvas"></canvas>
+</div>
+
+<div id="loading-cover" style="display:none;">
+    <div id="unity-loading-bar">
+        <div id="unity-logo"><img src="https://cdn.jsdelivr.net/gh/gulamen/gulax7@main/logo.png" onerror="this.style.display='none'"/></div>
+        <div id="unity-progress-bar-empty" style="display:none;">
+            <div id="unity-progress-bar-full"></div>
         </div>
-      </div>
+        <div class="spinner"></div>
     </div>
+</div>
 
-    <script>
-      // ── responsive.js UnityLoader hatasını önle ──
-      window.UnityLoader = { Error: { handler: function() {} } };
-    </script>
+<script>
+const BUILD_URL = "https://cdn.jsdelivr.net/gh/gulamen/gulax7@main/Build";
 
-    <script>
-      // ── Part birleştirme sistemi (fetch + XHR) ──
-      (function() {
-        var splitFiles = {
-          "https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/Build/Build.data": { parts: 4, prefix: "https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/Build/Build.data.part" },
-          "https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/Build/Build.wasm": { parts: 4, prefix: "https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/Build/Build.wasm.part" }
-        };
+/* ============================================================
+   GLOBALS — orijinal adlar korundu
+   ============================================================ */
+var player         = null;
+var leaderboard    = null;
+var payments       = null;
+var promptCanShow  = false;
+var reviewCanShow  = false;
+var initSDK        = true;   /* stub: hemen true */
+var initGame       = false;
+var photoSizeForInit;
+var scopesForInit;
+var firstAd        = true;
+var myGameInstance = null;
 
-        function findMatch(url) {
-          for (var key in splitFiles) {
-            if (url.indexOf(key) !== -1 && url.indexOf(".part") === -1) return key;
-          }
-          return null;
+/* ysdk stub — window.ysdk olarak da açılıyor */
+window.ysdk = {
+    environment: {
+        i18n:    { lang: 'en', tld: 'com' },
+        app:     { id: '0' },
+        browser: { lang: 'en' },
+        payload: ''
+    },
+    deviceInfo: {
+        type:      'desktop',
+        isMobile:  () => false,
+        isDesktop: () => true,
+        isTablet:  () => false,
+        isTV:      () => false,
+    },
+    screen: { fullscreen: { status: 'off', request: ()=>{}, exit: ()=>{} } },
+    adv: {
+        showFullscreenAdv: (o) => {
+            o?.callbacks?.onOpen?.();
+            setTimeout(() => { o?.callbacks?.onClose?.(true); }, 300);
+        },
+        showRewardedVideo: (o) => {
+            o?.callbacks?.onOpen?.();
+            setTimeout(() => {
+                o?.callbacks?.onRewarded?.();
+                setTimeout(() => { o?.callbacks?.onClose?.(); }, 200);
+            }, 500);
+        },
+        showBannerAdv:      () => Promise.resolve({ stickyAdvIsShowing: false }),
+        hideBannerAdv:      () => Promise.resolve(),
+        getBannerAdvStatus: () => Promise.resolve({ stickyAdvIsShowing: false }),
+    },
+    auth:     { openAuthDialog: () => Promise.resolve() },
+    feedback: {
+        canReview:     () => Promise.resolve({ value: false, reason: 'YSDK_DISABLED' }),
+        requestReview: () => Promise.resolve({ feedbackSent: false }),
+    },
+    shortcut: {
+        canShowPrompt: () => Promise.resolve({ canShow: false }),
+        showPrompt:    () => Promise.resolve({ outcome: 'rejected' }),
+    },
+    features: {
+        LoadingAPI:  { ready: () => {} },
+        GameplayAPI: { start: () => {}, stop: () => {} },
+        GamesAPI:    { getAllGames: () => Promise.reject() },
+    },
+    getLeaderboards: () => Promise.resolve({
+        getLeaderboardDescription: () => Promise.resolve({ default: false, description: { invert_sort_order: false, score_format: { options: { decimal_offset: 0 } }, type: 'numeric' } }),
+        getLeaderboardEntries:     () => Promise.resolve({ entries: [] }),
+        setLeaderboardScore:       () => {},
+    }),
+    getPlayer:   (o) => Promise.resolve({
+        getMode:         () => 'lite',
+        getName:         () => '',
+        getUniqueID:     () => 'unauthorized',
+        getPhoto:        () => 'null',
+        getPayingStatus: () => 'unknown',
+        getData:         () => Promise.resolve({}),
+        setData:         () => Promise.resolve(),
+    }),
+    getPayments: () => Promise.reject(new Error('payments not available')),
+    on: () => {},
+};
+var ysdk = window.ysdk;
+
+/* ============================================================
+   SendMessage helper
+   ============================================================ */
+function SendYG(method, arg) {
+    if (!myGameInstance) return;
+    try {
+        if (arg !== undefined) myGameInstance.SendMessage('YandexGame', method, arg);
+        else                   myGameInstance.SendMessage('YandexGame', method);
+    } catch(e) {}
+}
+
+/* ============================================================
+   SDK FONKSİYONLARI — orijinal imzalar
+   ============================================================ */
+function FocusGame() { window.focus(); canvas.focus(); }
+
+/* InitSDK — Unity'den çağrılır, oyunu başlatır */
+function InitSDK(photoSize, scopes) {
+    console.log('Init GAME');
+    initGame       = true;
+    photoSizeForInit = photoSize;
+    scopesForInit    = scopes;
+
+    ysdk.features.LoadingAPI?.ready();
+    /* Player stub — lite modda */
+    NotAuthorized();
+}
+
+function NotAuthorized() {
+    SendYG('SetInitializationSDK', JSON.stringify({
+        playerAuth: 'rejected', playerName: 'unauthorized',
+        playerId: 'unauthorized', playerPhoto: 'null'
+    }));
+}
+
+function InitPlayer(photoSize, scopes) { NotAuthorized(); }
+function OpenAuthDialog()              { NotAuthorized(); }
+
+/* Fullscreen */
+function FullAdShow() {
+    ysdk.adv.showFullscreenAdv({
+        callbacks: {
+            onOpen:  () => { SendYG('OpenFullAd'); },
+            onClose: (w) => { SendYG('CloseFullAd', w ? 'true' : 'false'); window.focus(); },
+            onError: () => { SendYG('ErrorFullAd'); window.focus(); }
         }
+    });
+}
+/* Orijinal kodda typo vardı: FullscreenShow → FullAdShow ile eşleştir */
+var FullscreenShow = FullAdShow;
 
-        function downloadAndMerge(matchKey) {
-          var info = splitFiles[matchKey];
-          console.log("[MERGE] " + matchKey + " yakalandi, " + info.parts + " part indiriliyor...");
-          var fetches = [];
-          for (var i = 1; i <= info.parts; i++) {
-            fetches.push(
-              (function(num) {
-                return fetch(info.prefix + num).then(function(resp) {
-                  if (!resp.ok) throw new Error("[MERGE] part" + num + " HATA: " + resp.status);
-                  return resp.arrayBuffer();
-                }).then(function(buf) {
-                  console.log("[MERGE] " + matchKey + " part" + num + " OK - " + (buf.byteLength / 1048576).toFixed(2) + " MB");
-                  return { index: num, buffer: buf };
-                });
-              })(i)
-            );
-          }
-          return Promise.all(fetches).then(function(results) {
-            results.sort(function(a, b) { return a.index - b.index; });
-            var totalSize = results.reduce(function(s, r) { return s + r.buffer.byteLength; }, 0);
-            var merged = new Uint8Array(totalSize);
-            var offset = 0;
-            results.forEach(function(r) {
-              merged.set(new Uint8Array(r.buffer), offset);
-              offset += r.buffer.byteLength;
-            });
-            console.log("[MERGE] " + matchKey + " tamamlandi! Toplam: " + (totalSize / 1048576).toFixed(2) + " MB");
-            return merged;
-          });
+/* Rewarded */
+function RewardedShow(id) {
+    ysdk.adv.showRewardedVideo({
+        callbacks: {
+            onOpen:     () => { SendYG('OpenVideo'); },
+            onRewarded: () => { SendYG('RewardVideo', id); },
+            onClose:    () => { SendYG('CloseVideo'); window.focus(); },
+            onError:    () => { SendYG('ErrorVideo'); }
         }
+    });
+}
 
-        // ── Fetch override (wasm için) ──
-        var originalFetch = window.fetch;
-        window.fetch = function(url, opts) {
-          var urlStr = (typeof url === "string") ? url : url.url;
-          var matchKey = findMatch(urlStr);
-          if (!matchKey) return originalFetch.call(this, url, opts);
+function StickyAdActivity() {}
 
-          return downloadAndMerge(matchKey).then(function(merged) {
-            var ct = matchKey.indexOf(".wasm") !== -1 ? "application/wasm" : "application/octet-stream";
-            return new Response(merged.buffer, {
-              status: 200,
-              headers: { "Content-Type": ct, "Content-Length": merged.byteLength }
-            });
-          });
-        };
+/* Cloud */
+function SaveCloud()  {}
+function LoadCloud()  { SendYG('SetLoadSaves', 'noData'); }
 
-        // ── XHR override (data için - Unity loader XHR kullanıyor) ──
-        var OrigXHR = XMLHttpRequest;
-        var XHRProto = OrigXHR.prototype;
-        var origOpen = XHRProto.open;
-        var origSend = XHRProto.send;
+/* Payments */
+function InitPayments() {}
+function GetPayments()  { SendYG('PaymentsEntries', JSON.stringify({ id:[], title:[], description:[], imageURI:[], priceValue:[], purchased:[] })); }
+function BuyPayments(id)      { SendYG('OnPurchaseFailed', id); window.focus(); }
+function DeletePurchase()     {}
+function DeleteAllPurchases() {}
 
-        XHRProto.open = function(method, url) {
-          this._mergeUrl = (typeof url === "string") ? url : "";
-          this._mergeMatch = findMatch(this._mergeUrl);
-          return origOpen.apply(this, arguments);
-        };
+/* Leaderboard */
+function InitLeaderboard()    { SendYG('InitializedLB'); }
+function SetLeaderboardScores() {}
+function GetLeaderboardScores(nameLB, maxPlayers) {
+    SendYG('LeaderboardEntries', JSON.stringify({
+        nameLB: nameLB, entries: 'No data',
+        rank: [], photo: [], playersName: [], scorePlayers: []
+    }));
+}
+function EntriesLB() {}
 
-        XHRProto.send = function(body) {
-          if (!this._mergeMatch) return origSend.apply(this, arguments);
+/* Language / Env */
+function LanguageRequest() { SendYG('SetLanguage', 'en'); }
+function RequestingEnvironmentData() {
+    SendYG('SetEnvironmentData', JSON.stringify({
+        language:'en', domain:'com', deviceType:'desktop',
+        isMobile:false, isDesktop:true, isTablet:false, isTV:false,
+        appID:'0', browserLang:'en', payload:'',
+        promptCanShow:false, reviewCanShow:false
+    }));
+}
 
-          var xhr = this;
-          var matchKey = this._mergeMatch;
+/* Review / Prompt */
+function Review()     { SendYG('ReviewSent', 'false'); window.focus(); }
+function PromptShow() { SendYG('OnPromptFail'); window.focus(); }
 
-          downloadAndMerge(matchKey).then(function(merged) {
-            Object.defineProperty(xhr, "status", { get: function() { return 200; } });
-            Object.defineProperty(xhr, "readyState", { get: function() { return 4; } });
-            Object.defineProperty(xhr, "response", { get: function() { return merged.buffer; } });
-            Object.defineProperty(xhr, "responseType", { get: function() { return "arraybuffer"; } });
-            Object.defineProperty(xhr, "statusText", { get: function() { return "OK"; } });
-            Object.defineProperty(xhr, "getAllResponseHeaders", { value: function() { return "content-type: application/octet-stream\r\ncontent-length: " + merged.byteLength + "\r\n"; } });
-            Object.defineProperty(xhr, "getResponseHeader", { value: function(h) {
-              if (h.toLowerCase() === "content-length") return "" + merged.byteLength;
-              if (h.toLowerCase() === "content-type") return "application/octet-stream";
-              return null;
-            }});
+/* Diğer */
+function PaintRBT()            {}
+function StaticRBTDeactivate() {}
 
-            if (typeof xhr.onprogress === "function") {
-              xhr.onprogress({ loaded: merged.byteLength, total: merged.byteLength, lengthComputable: true });
-            }
-            if (typeof xhr.onload === "function") {
-              xhr.onload({ target: xhr });
-            }
-            if (typeof xhr.onreadystatechange === "function") {
-              xhr.onreadystatechange();
-            }
-            try { xhr.dispatchEvent(new Event("load")); } catch(e) {}
-          }).catch(function(err) {
-            console.error("[MERGE-XHR] " + matchKey + " HATA:", err);
-            if (typeof xhr.onerror === "function") xhr.onerror(err);
-          });
-        };
-      })();
-    </script>
+/* ============================================================
+   SETUP
+   ============================================================ */
+const container        = document.querySelector("#unity-container");
+const canvas           = document.querySelector("#unity-canvas");
+const loadingCover     = document.querySelector("#loading-cover");
+const progressBarEmpty = document.querySelector("#unity-progress-bar-empty");
+const progressBarFull  = document.querySelector("#unity-progress-bar-full");
+const spinner          = document.querySelector('.spinner');
 
-    <script>
-      var buildUrl = "https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/Build";
-      var loaderUrl = buildUrl + "/Build.loader.js";
-      var config = {
-        dataUrl: buildUrl + "/Build.data",
-        frameworkUrl: buildUrl + "/Build.framework.js",
-        codeUrl: buildUrl + "/Build.wasm",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "DefaultCompany",
-        productName: "SpiderDoll",
-        productVersion: "1.0",
-      };
-      var container = document.querySelector("#unity-container");
-      var canvas = document.querySelector("#unity-canvas");
-      var loadingBar = document.querySelector("#unity-loading-bar");
-      var progressBarFull = document.querySelector("#unity-progress-bar-full");
-      loadingBar.style.display = "block";
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          progressBarFull.style.width = 100 * progress + "%";
-        }).then((unityInstance) => {
-          loadingBar.style.display = "none";
-        }).catch((message) => {
-          alert(message);
-        });
-      };
-      document.body.appendChild(script);
-    </script>
-    <script src="https://cdn.jsdelivr.net/gh/okyesgoogl/sp557xxd@main/TemplateData/responsive.js"></script>
+canvas.style.background = "url('https://cdn.jsdelivr.net/gh/gulamen/gulax7@main/background.png') center / cover";
+loadingCover.style.display = "";
 
-    <!-- Sticky Bottom Center Ad (728x90) with Smooth Slide-Out and Reappearance -->
+if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+    container.className = "unity-mobile";
+}
+
+canvas.addEventListener("touchstart",  () => window.focus());
+canvas.addEventListener("pointerdown", () => window.focus());
+
+/* ============================================================
+   UNITY LOADER
+   ============================================================ */
+const config = {
+    dataUrl:            `${BUILD_URL}/OnlyUp!.data.unityweb`,
+    frameworkUrl:       `${BUILD_URL}/OnlyUp!.framework.js.unityweb`,
+    codeUrl:            `${BUILD_URL}/OnlyUp!.wasm.unityweb`,
+    streamingAssetsUrl: "StreamingAssets",
+    companyName:        "DefaultCompany",
+    productName:        "WallJumping",
+    productVersion:     "1.0",
+};
+
+const script  = document.createElement("script");
+script.src    = `${BUILD_URL}/OnlyUp!.loader.js`;
+script.onload = () => {
+    createUnityInstance(canvas, config, (progress) => {
+        spinner.style.display          = "none";
+        progressBarEmpty.style.display = "";
+        progressBarFull.style.width    = `${100 * progress}%`;
+    }).then((inst) => {
+        myGameInstance = inst;
+        loadingCover.style.display = "none";
+        canvas.focus();
+    }).catch(e => { console.error(e); });
+};
+document.body.appendChild(script);
+</script>
+
+<!-- Sticky Bottom Center Ad (728x90) with Smooth Slide-Out and Reappearance -->
 <style>
   /* Container: Bottom center, fixed, with overflow hidden */
   #ad-container {
@@ -330,7 +430,7 @@
   })();
 </script>
 
-  </body>
+</body>
 </html>
 
 ]]></Content>
